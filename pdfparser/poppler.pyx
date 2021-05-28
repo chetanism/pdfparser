@@ -5,6 +5,7 @@ from libcpp.string cimport string
 from cpython cimport bool as PyBool
 from cpython.object cimport Py_EQ, Py_NE
 from libcpp.memory cimport unique_ptr
+from cython.operator cimport dereference as deref
 
 ctypedef bool GBool
 DEF PRECISION=1e-6
@@ -21,7 +22,7 @@ cdef extern from "GlobalParams.h":
         GlobalParams(const char *customPopplerDataDir = NULL);
         void setErrQuiet(bool)
         bool getErrQuiet()
- # we need to init globalParams - just once during program run
+# we need to init globalParams - just once during program run
 globalParams = unique_ptr[GlobalParams](new GlobalParams())
 
 cdef extern from "goo/GooString.h":
@@ -44,25 +45,25 @@ cdef extern from "PDFDoc.h":
         int getNumPages()
 
         void displayPage(OutputDev *out, int page,
-           double hDPI, double vDPI, int rotate,
-           bool useMediaBox, bool crop, bool printing,
-           bool (*abortCheckCbk)(void *data) = NULL,
-           void *abortCheckCbkData = NULL,
-            bool (*annotDisplayDecideCbk)(Annot *annot, void *user_data) = NULL,
-            void *annotDisplayDecideCbkData = NULL, bool copyXRef = False)
+                         double hDPI, double vDPI, int rotate,
+                         bool useMediaBox, bool crop, bool printing,
+                         bool (*abortCheckCbk)(void *data) = NULL,
+                         void *abortCheckCbkData = NULL,
+                         bool (*annotDisplayDecideCbk)(Annot *annot, void *user_data) = NULL,
+                         void *annotDisplayDecideCbkData = NULL, bool copyXRef = False)
         double getPageMediaWidth(int page)
         double getPageMediaHeight(int page)
 
 cdef extern from "PDFDocFactory.h":
     cdef cppclass PDFDocFactory:
         PDFDocFactory()
-        PDFDoc *createPDFDoc(const GooString &uri, GooString *ownerPassword = NULL,
-                             GooString *userPassword = NULL, void *guiDataA = NULL)
+        unique_ptr[PDFDoc] createPDFDoc(const GooString & uri, GooString *ownerPassword = NULL,
+                                        GooString *userPassword = NULL, void *guiDataA = NULL)
 
 cdef extern from "TextOutputDev.h":
     cdef cppclass TextOutputDev(OutputDev):
         TextOutputDev(char *fileName, bool physLayoutA,
-        double fixedPitchA, bool rawOrderA, bool append, bool discardDiagA)
+                      double fixedPitchA, bool rawOrderA, bool append, bool discardDiagA)
         TextPage *takeText()
 
     cdef cppclass TextPage:
@@ -89,8 +90,8 @@ cdef extern from "TextOutputDev.h":
         GooString *getText()
         void getBBox(double *xMinA, double *yMinA, double *xMaxA, double *yMaxA)
         void getCharBBox(int charIdx, double *xMinA, double *yMinA,
-           double *xMaxA, double *yMaxA)
-        bool hasSpaceAfter  ()
+                         double *xMaxA, double *yMaxA)
+        bool hasSpaceAfter()
         const TextFontInfo *getFontInfo(int idx)
         const GooString *getFontName(int idx)
         double getFontSize()
@@ -109,40 +110,41 @@ cdef extern from "TextOutputDev.h":
 
 
 
-cdef double RESOLUTION=72.0
+cdef double RESOLUTION = 72.0
 
 # cdef GlobalParams *globalParams = new GlobalParams()
 
 cdef class Document:
     cdef:
-        PDFDoc *_doc
+        unique_ptr[PDFDoc] _doc
         int _pg
         PyBool phys_layout
         double fixed_pitch
     def __cinit__(self, char *fname, PyBool phys_layout=False, double fixed_pitch=0, PyBool quiet=False):
-        self._doc=PDFDocFactory().createPDFDoc(GooString(fname))
-        self._pg=0
-        self.phys_layout=phys_layout
-        self.fixed_pitch=fixed_pitch
+        self._doc = PDFDocFactory().createPDFDoc(GooString(fname))
+        self._pg = 0
+        self.phys_layout = phys_layout
+        self.fixed_pitch = fixed_pitch
         if quiet:
             globalParams.get().setErrQuiet(True)
 
     def __dealloc__(self):
-        if self._doc != NULL:
-            del self._doc
+        pass
+        # if self._doc != NULL:
+        #     del self._doc
 
     property no_of_pages:
         def __get__(self):
-            return self._doc.getNumPages()
+            return deref(self._doc).getNumPages()
 
     cdef void render_page(self, int page_no, OutputDev *dev):
-        self._doc.displayPage(dev, page_no, RESOLUTION, RESOLUTION, 0, True, False, False)
+        deref(self._doc).displayPage(dev, page_no, RESOLUTION, RESOLUTION, 0, True, False, False)
 
     cdef object get_page_size(self, page_no):
-            cdef double w,h
-            w=self._doc.getPageMediaWidth(page_no)
-            h= self._doc.getPageMediaHeight(page_no)
-            return (w,h)
+        cdef double w, h
+        w = deref(self._doc).getPageMediaWidth(page_no)
+        h = deref(self._doc).getPageMediaHeight(page_no)
+        return (w, h)
 
     def __iter__(self):
         return self
@@ -153,10 +155,8 @@ cdef class Document:
     def __next__(self):
         if self._pg >= self.no_of_pages:
             raise StopIteration()
-        self._pg+=1
+        self._pg += 1
         return self.get_page(self._pg)
-
-
 
 cdef class Page:
     cdef:
@@ -167,13 +167,13 @@ cdef class Page:
 
     def __cinit__(self, int page_no, Document doc):
         cdef TextOutputDev *dev
-        self.page_no=page_no
+        self.page_no = page_no
         dev = new TextOutputDev(NULL, doc.phys_layout, doc.fixed_pitch, False, False, True)
         doc.render_page(page_no, <OutputDev*> dev)
-        self.page= dev.takeText()
+        self.page = dev.takeText()
         del dev
         self.curr_flow = self.page.getFlows()
-        self.doc=doc
+        self.doc = doc
 
     def __dealloc__(self):
         if self.page != NULL:
@@ -186,8 +186,8 @@ cdef class Page:
         cdef Flow f
         if not self.curr_flow:
             raise StopIteration()
-        f=Flow(self)
-        self.curr_flow=self.curr_flow.getNext()
+        f = Flow(self)
+        self.curr_flow = self.curr_flow.getNext()
         return f
 
     property page_no:
@@ -205,8 +205,8 @@ cdef class Flow:
         const TextBlock *curr_block
 
     def __cinit__(self, Page pg):
-        self.flow=pg.curr_flow
-        self.curr_block=self.flow.getBlocks()
+        self.flow = pg.curr_flow
+        self.curr_block = self.flow.getBlocks()
 
     def __iter__(self):
         return self
@@ -215,8 +215,8 @@ cdef class Flow:
         cdef Block b
         if not self.curr_block:
             raise StopIteration()
-        b=Block(self)
-        self.curr_block=self.curr_block.getNext()
+        b = Block(self)
+        self.curr_block = self.curr_block.getNext()
         return b
 
 cdef class Block:
@@ -225,13 +225,13 @@ cdef class Block:
         const TextLine *curr_line
 
     def __cinit__(self, Flow flow):
-        self.block= flow.curr_block
-        self.curr_line=self.block.getLines()
+        self.block = flow.curr_block
+        self.curr_line = self.block.getLines()
 
-#TODO - do we need to delete blocks, lines ... or are they destroyed with page?
-#     def __dealloc__(self):
-#         if self.block != NULL:
-#             del self.block
+    #TODO - do we need to delete blocks, lines ... or are they destroyed with page?
+    #     def __dealloc__(self):
+    #         if self.block != NULL:
+    #             del self.block
 
     def __iter__(self):
         return self
@@ -240,36 +240,36 @@ cdef class Block:
         cdef Line l
         if not self.curr_line:
             raise StopIteration()
-        l=Line(self)
-        self.curr_line=self.curr_line.getNext()
+        l = Line(self)
+        self.curr_line = self.curr_line.getNext()
         return l
 
     property bbox:
         def __get__(self):
-            cdef double x1,y1,x2,y2
+            cdef double x1, y1, x2, y2
             self.block.getBBox(&x1, &y1, &x2, &y2)
-            return  BBox(x1,y1,x2,y2)
+            return BBox(x1, y1, x2, y2)
 
 cdef class BBox:
     cdef double x1, y1, x2, y2
 
-    def __cinit__(self, double x1, double y1, double x2, double y2 ):
-        self.x1=x1
-        self.x2=x2
-        self.y1=y1
-        self.y2=y2
+    def __cinit__(self, double x1, double y1, double x2, double y2):
+        self.x1 = x1
+        self.x2 = x2
+        self.y1 = y1
+        self.y2 = y2
 
     def as_tuple(self):
-        return self.x1,self.y1, self.x2, self.y2
+        return self.x1, self.y1, self.x2, self.y2
 
     def __getitem__(self, i):
-        if i==0:
+        if i == 0:
             return self.x1
-        elif i==1:
+        elif i == 1:
             return self.y1
-        elif i==2:
+        elif i == 2:
             return self.x2
-        elif i==3:
+        elif i == 3:
             return self.y2
         raise IndexError()
 
@@ -277,53 +277,49 @@ cdef class BBox:
         def __get__(self):
             return self.x1
         def __set__(self, double val):
-            self.x1=val
+            self.x1 = val
 
     property x2:
         def __get__(self):
             return self.x2
         def __set__(self, double val):
-            self.x2=val
+            self.x2 = val
 
     property y1:
         def __get__(self):
             return self.y1
         def __set__(self, double val):
-            self.y1=val
+            self.y1 = val
 
     property y2:
         def __get__(self):
             return self.y2
         def __set__(self, double val):
-            self.y2=val
+            self.y2 = val
 
 cdef class Color:
     cdef:
-        double r,b,g
+        double r, b, g
 
     def __cinit__(self, double r, double g, double b):
         self.r = r
         self.g = g
         self.b = b
 
-
     def as_tuple(self):
-        return self.r,self.g, self.b
+        return self.r, self.g, self.b
 
     property r:
         def __get__(self):
             return self.r
 
-
     property g:
         def __get__(self):
             return self.g
 
-
     property b:
         def __get__(self):
             return self.b
-
 
     def __str__(self):
         return 'r:%0.2f g:%0.2f, b:%0.2f' % self.as_tuple()
@@ -331,11 +327,10 @@ cdef class Color:
     def __richcmp__(x, y, op):
         if isinstance(x, Color) and isinstance(y, Color) and (op == Py_EQ or op == Py_NE):
             eq = abs(x.r - y.r) < PRECISION and \
-                 abs(x.g -y.g) < PRECISION and \
-                 abs(x.b -y.b) < PRECISION
+                 abs(x.g - y.g) < PRECISION and \
+                 abs(x.b - y.b) < PRECISION
             return eq if op == Py_EQ else not eq
         return NotImplemented
-
 
 cdef class FontInfo:
     cdef:
@@ -344,38 +339,36 @@ cdef class FontInfo:
         Color color
 
     def __cinit__(self, unicode name, double size, Color color):
-        nparts=name.split('+',1)
-        self.name=nparts[-1]
-        self.size=size
-        self.color=color
+        nparts = name.split('+', 1)
+        self.name = nparts[-1]
+        self.size = size
+        self.color = color
 
     property name:
         def __get__(self):
             return self.name
         def __set__(self, unicode val):
-            self.name=val
+            self.name = val
 
     property size:
         def __get__(self):
             return self.size
         def __set__(self, double val):
-            self.size=val
+            self.size = val
 
     property color:
         def __get__(self):
             return self.color
         def __set__(self, Color val):
-            self.color=val
+            self.color = val
 
     def __richcmp__(x, y, op):
         if isinstance(x, FontInfo) and isinstance(y, FontInfo) and (op == Py_EQ or op == Py_NE):
             eq = x.name == y.name and \
-                 abs(x.size -y.size) < PRECISION and \
+                 abs(x.size - y.size) < PRECISION and \
                  x.color == y.color
             return eq if op == Py_EQ else not eq
         return NotImplemented
-
-
 
 cdef class CompactListIterator:
     cdef:
@@ -384,17 +377,16 @@ cdef class CompactListIterator:
         int pos
 
     def __cinit__(self, list index, list items):
-        self.pos=0
-        self.index=index
-        self.items=items
+        self.pos = 0
+        self.index = index
+        self.items = items
 
     def __next__(self):
         if self.pos >= len(self.index):
             raise StopIteration()
-        i= self.items[self.index[self.pos]]
-        self.pos+=1
+        i = self.items[self.index[self.pos]]
+        self.pos += 1
         return i
-
 
 cdef class CompactList:
     cdef:
@@ -402,18 +394,17 @@ cdef class CompactList:
         list items
 
     def __init__(self):
-        self.index=[]
-        self.items=[]
-
+        self.index = []
+        self.items = []
 
     def append(self, v):
         cdef long last
-        last=len(self.items)-1
-        if last>=0 and self.items[last] == v:
+        last = len(self.items) - 1
+        if last >= 0 and self.items[last] == v:
             self.index.append(last)
         else:
             self.items.append(v)
-            self.index.append(last+1)
+            self.index.append(last + 1)
 
     def __getitem__(self, idx):
         return self.items[self.index[idx]]
@@ -428,8 +419,6 @@ cdef class CompactList:
         def __get__(self):
             return float(len(self.items)) / len(self.index)
 
-
-
 cdef class Line:
     cdef:
         const TextLine *line
@@ -443,13 +432,13 @@ cdef class Line:
         self.line = block.curr_line
 
     def __init__(self, Block block):
-        self._text=u'' # text bytes
+        self._text = u''  # text bytes
         self.x1 = 0
         self.y1 = 0
         self.x2 = 0
         self.y2 = 0
-        self._bboxes=[]
-        self._fonts=CompactList()
+        self._bboxes = []
+        self._fonts = CompactList()
         self._get_text()
         assert len(self._text) == len(self._bboxes)
 
@@ -457,68 +446,68 @@ cdef class Line:
         cdef:
             const TextWord *w
             GooString *s
-            double bx1,bx2, by1, by2
+            double bx1, bx2, by1, by2
             list words = []
             int offset = 0, i, wlen
             BBox last_bbox
             FontInfo last_font
-            double r,g,b
+            double r, g, b
 
-        w=self.line.getWords()
+        w = self.line.getWords()
         while w:
-            wlen=w.getLength()
-            assert wlen>0
+            wlen = w.getLength()
+            assert wlen > 0
             # gets bounding boxes for all characters
             # and font info
             for i in range(wlen):
-                w.getCharBBox(i, &bx1, &by1, &bx2, &by2 )
-                last_bbox=BBox(bx1,by1,bx2,by2)
+                w.getCharBBox(i, &bx1, &by1, &bx2, &by2)
+                last_bbox = BBox(bx1, by1, bx2, by2)
                 # if previous word is space update it's right end
                 if i == 0 and words and words[-1] == u' ':
-                    self._bboxes[-1].x2=last_bbox.x1
+                    self._bboxes[-1].x2 = last_bbox.x1
 
                 self._bboxes.append(last_bbox)
                 w.getColor(&r, &g, &b)
-                font_name=w.getFontName(i)
-                if <unsigned long>font_name != 0:
+                font_name = w.getFontName(i)
+                if <unsigned long> font_name != 0:
                     font_name_cstr = font_name.c_str()
                 else:
-                    font_name_cstr = b"unknown" # in rare cases font name can be NULL
+                    font_name_cstr = b"unknown"  # in rare cases font name can be NULL
 
-                last_font=FontInfo(font_name_cstr.decode('UTF-8', 'replace'),  # In rare cases font name is not UTF-8
-                                   w.getFontSize(),
-                                   Color(r,g,b)
-                                   )
+                last_font = FontInfo(font_name_cstr.decode('UTF-8', 'replace'),  # In rare cases font name is not UTF-8
+                                     w.getFontSize(),
+                                     Color(r, g, b)
+                                     )
                 self._fonts.append(last_font)
             #and then text as UTF-8 bytes
-            s=w.getText()
+            s = w.getText()
             #print s.getCString(), w.getLength(), len(s.getCString())
             s_cstr = s.c_str()
-            words.append(s_cstr.decode('UTF-8')) # decoded to python unicode string
+            words.append(s_cstr.decode('UTF-8'))  # decoded to python unicode string
             del s
             # must have same ammount of bboxes and characters in word
             assert len(words[-1]) == wlen
             #calculate line bbox
             w.getBBox(&bx1, &by1, &bx2, &by2)
             if bx1 < self.x1 or self.x1 == 0:
-                self.x1=bx1
+                self.x1 = bx1
             if by1 < self.y1 or self.y1 == 0:
-                self.y1= by1
+                self.y1 = by1
             if bx2 > self.x2:
-                self.x2=bx2
+                self.x2 = bx2
             if by2 > self.y2:
-                self.y2=by2
+                self.y2 = by2
             # add space after word if necessary
             if w.hasSpaceAfter():
                 words.append(u' ')
                 self._bboxes.append(BBox(last_bbox.x2, last_bbox.y1, last_bbox.x2, last_bbox.y2))
                 self._fonts.append(last_font)
-            w=w.getNext()
-        self._text= u''.join(words)
+            w = w.getNext()
+        self._text = u''.join(words)
 
     property bbox:
         def __get__(self):
-            return BBox(self.x1,self.y1,self.x2,self.y2)
+            return BBox(self.x1, self.y1, self.x2, self.y2)
 
     property text:
         def __get__(self):
@@ -531,10 +520,3 @@ cdef class Line:
     property char_fonts:
         def __get__(self):
             return self._fonts
-
-
-
-
-
-
-
