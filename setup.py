@@ -64,7 +64,7 @@ def pkgconfig(*packages, **kw):
     return config
 
 # Mac OS build fix:
-mac_compile_args = ["-std=c++11", "-stdlib=libc++", "-mmacosx-version-min=10.7"]
+mac_compile_args = ["-std=c++17", "-stdlib=libc++", "-mmacosx-version-min=10.7"]
 POPPLER_ROOT = os.environ.get('POPPLER_ROOT', None)
 if POPPLER_ROOT:
     POPPLER_CPP_LIB_DIR = os.path.join(POPPLER_ROOT, 'cpp/')
